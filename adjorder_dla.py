@@ -190,8 +190,11 @@ def run_analysis(seed, device):
 
 
 def make_figure(results):
-    """Side-by-side attribution distribution for both seeds."""
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    """Side-by-side attribution distribution for as many seeds as we have
+    results for. Drops empty panels if a seed has no checkpoint data."""
+    n_seeds = len(results)
+    fig, axes = plt.subplots(2, n_seeds, figsize=(5.5 * n_seeds, 8),
+                             squeeze=False)
 
     for col, r in enumerate(results):
         seed = r['seed']

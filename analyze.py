@@ -440,45 +440,57 @@ def make_fig2(runs, out_path, probe=None):
     """
     if probe is None:
         probe = _pick_metric_dependence_probe(runs)
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
-    for seed_label, df in runs.items():
+    BEHAVIOURAL = {"seed42", "seed123", "seed7", "seed5", "seed17"}
+    runs_b = {s: df for s, df in runs.items() if s in BEHAVIOURAL}
+    if not runs_b:
+        runs_b = runs
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+    seeds = sorted(runs_b.keys())
+    seed_colors = {s: f"C{i}" for i, s in enumerate(seeds)}
+    SMOOTH_WIN = 21
+
+    def smooth(y, win=SMOOTH_WIN):
+        if len(y) < win:
+            return y
+        return np.convolve(y, np.ones(win) / win, mode="same")
+
+    for seed_label in seeds:
+        df = runs_b[seed_label]
         sub = df[df["probe_name"] == probe].sort_values("step")
         if len(sub) == 0:
             continue
-        kernel = np.ones(3) / 3.0
-        argmax_sm = np.convolve(sub["argmax_acc"].values, kernel, mode="same")
-        lp_sm = np.convolve(sub["logprob_diff"].values, kernel, mode="same")
-        axes[0].plot(sub["step"], sub["argmax_acc"], marker="o", markersize=3,
-                     alpha=0.25, linestyle="none", label=None)
-        axes[0].plot(sub["step"], argmax_sm, alpha=0.85, linewidth=1.5,
-                     label=seed_label)
-        axes[1].plot(sub["step"], sub["logprob_diff"], marker="o", markersize=3,
-                     alpha=0.25, linestyle="none", label=None)
-        axes[1].plot(sub["step"], lp_sm, alpha=0.85, linewidth=1.5,
-                     label=seed_label)
+        t = sub["step"].values
+        a = sub["argmax_acc"].values
+        l = sub["logprob_diff"].values
+        c = seed_colors[seed_label]
+        axes[0].plot(t, smooth(a), color=c, alpha=0.9, linewidth=1.8, label=seed_label)
+        axes[1].plot(t, smooth(l), color=c, alpha=0.9, linewidth=1.8, label=seed_label)
     for ax in axes:
         ax.set_xscale("symlog", linthresh=10)
         ax.grid(alpha=0.3, which="both")
-    axes[0].set_title(f"{probe}: step-like metric (argmax acc)")
-    axes[0].set_xlabel("step (symlog)")
-    axes[0].set_ylabel("argmax accuracy")
-    axes[0].axhline(0.5, color="k", linestyle=":", alpha=0.4)
-    axes[0].set_ylim(-0.05, 1.05)
+    axes[0].set_title(f"argmax accuracy (step-like)\nlooks like a sharp emergence transition",
+                      fontsize=11)
+    axes[0].set_xlabel("training step (symlog)", fontsize=10)
+    axes[0].set_ylabel("argmax accuracy", fontsize=10)
+    axes[0].axhline(0.5, color="k", linestyle=":", alpha=0.4, label="chance")
+    axes[0].set_ylim(-0.02, 1.02)
     axes[0].legend(loc="lower right", fontsize=9)
 
-    axes[1].set_title(f"{probe}: continuous metric (logprob diff)")
-    axes[1].set_xlabel("step (symlog)")
-    axes[1].set_ylabel("mean (logp_correct - logp_distractor)")
+    axes[1].set_title(f"log-probability difference (continuous)\nrises smoothly over two decades",
+                      fontsize=11)
+    axes[1].set_xlabel("training step (symlog)", fontsize=10)
+    axes[1].set_ylabel("mean (logp_correct − logp_distractor)", fontsize=10)
     axes[1].axhline(0.0, color="k", linestyle=":", alpha=0.4)
     axes[1].legend(loc="lower right", fontsize=9)
 
     fig.suptitle(
-        f"Metric-dependence on {probe!r}: argmax (step-like) vs "
-        "logprob_diff (continuous) — Schaeffer et al. argument",
-        fontsize=11)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+        f"Metric-dependence on {probe} (5 behavioural seeds): "
+        "the same learning produces a step-like or smooth curve depending on the metric.",
+        fontsize=11.5,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -633,14 +645,24 @@ def write_summary(fits_df, out_path):
 
 
 def make_fig4(runs, out_path):
-    """Dedicated transient-emergence panel: one subplot per transient probe,
-    showing per-seed argmax_acc trajectories with peak and final annotated.
-    Transient = peak−late > 0.15 AND peak ≥ 0.6.
+    """Transient-emergence figure. For each transient probe (peak−late > 0.15
+    AND peak ≥ 0.6), show:
+      - per-seed heavily-smoothed argmax_acc trajectories (alpha=0.4)
+      - cross-seed mean ± std band (bold)
+      - bold marker at each seed's smoothed peak
+      - dashed line at chance (0.5)
+    Aggressive smoothing (rolling window 51) makes the rise+fall obvious.
+    Behavioural seeds only (drops seed99 if present, since that's mechanistic).
     """
+    BEHAVIOURAL = {"seed42", "seed123", "seed7", "seed5", "seed17"}
+    runs_b = {s: df for s, df in runs.items() if s in BEHAVIOURAL}
+    if not runs_b:
+        runs_b = runs
+
     transient_probes = []
-    for probe in sorted({p for df in runs.values() for p in df["probe_name"].unique()}):
+    for probe in sorted({p for df in runs_b.values() for p in df["probe_name"].unique()}):
         accs = []
-        for df in runs.values():
+        for df in runs_b.values():
             sub = df[df["probe_name"] == probe].sort_values("step")
             if len(sub) == 0:
                 continue
@@ -661,41 +683,92 @@ def make_fig4(runs, out_path):
     if not transient_probes:
         return
 
-    seeds = sorted(runs.keys())
+    # Order so end_of_sentence (the lead probe) is leftmost
+    order_pref = ["end_of_sentence", "modal_continuation", "adjective_order"]
+    transient_probes = sorted(transient_probes,
+                              key=lambda p: order_pref.index(p) if p in order_pref else 99)
+
+    seeds = sorted(runs_b.keys())
     seed_colors = {s: f"C{i}" for i, s in enumerate(seeds)}
-    n = len(transient_probes)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False)
+    n_p = len(transient_probes)
+    fig, axes = plt.subplots(1, n_p, figsize=(5.5 * n_p, 4.5), squeeze=False, sharey=True)
+
+    SMOOTH_WIN = 51  # aggressive — collapse becomes visible
+
+    def heavy_smooth(y, win=SMOOTH_WIN):
+        if len(y) < win:
+            return y
+        ker = np.ones(win) / win
+        return np.convolve(y, ker, mode="same")
 
     for col, probe in enumerate(transient_probes):
         ax = axes[0][col]
-        for seed_label, df in runs.items():
+        # Common step grid for cross-seed mean
+        all_t = sorted({int(s) for df in runs_b.values()
+                        for s in df[df["probe_name"] == probe]["step"].values})
+        if not all_t:
+            continue
+        # Per-seed smoothed curves on common grid via interp
+        per_seed_curves = {}
+        peak_points = []
+        for seed_label, df in runs_b.items():
             sub = df[df["probe_name"] == probe].sort_values("step")
             if len(sub) == 0:
                 continue
             t = sub["step"].values
             y = sub["argmax_acc"].values
-            y_sm = np.convolve(y, np.ones(5) / 5.0, mode="same") if len(y) >= 5 else y
-            peak_step = t[int(np.argmax(y_sm))]
-            peak_val = float(y_sm.max())
-            ax.plot(t, y, alpha=0.3, color=seed_colors[seed_label])
-            ax.plot(t, y_sm, alpha=0.85, linewidth=1.5,
+            y_sm = heavy_smooth(y)
+            # Find peak (skip first 30 steps to suppress init noise)
+            mask = t > 30
+            if mask.any():
+                peak_idx = int(np.argmax(np.where(mask, y_sm, -1)))
+                peak_points.append((seed_label, t[peak_idx], y_sm[peak_idx]))
+            # Light-alpha individual trace
+            ax.plot(t, y_sm, alpha=0.4, linewidth=1.2,
                     color=seed_colors[seed_label], label=seed_label)
-            ax.axvline(peak_step, color=seed_colors[seed_label],
-                       linestyle="--", alpha=0.4, linewidth=0.8)
-        ax.set_title(probe.replace("_", "\n"), fontsize=10)
-        ax.set_xlabel("training step")
-        ax.set_ylabel("argmax acc")
-        ax.set_ylim(-0.05, 1.05)
-        ax.axhline(0.5, color="k", linestyle=":", alpha=0.3)
+            # Resample to common grid
+            per_seed_curves[seed_label] = np.interp(all_t, t, y_sm)
+        # Cross-seed mean and std
+        if len(per_seed_curves) >= 2:
+            mat = np.vstack(list(per_seed_curves.values()))
+            mean_curve = mat.mean(axis=0)
+            std_curve = mat.std(axis=0)
+            ax.plot(all_t, mean_curve, color="black", linewidth=2.5,
+                    label="mean (5 seeds)", zorder=5)
+            ax.fill_between(all_t, mean_curve - std_curve, mean_curve + std_curve,
+                            color="black", alpha=0.18, zorder=4, label="±1 std")
+        # Bold peak markers
+        for seed_label, peak_t, peak_v in peak_points:
+            ax.scatter([peak_t], [peak_v], s=70, marker="o",
+                       color=seed_colors[seed_label],
+                       edgecolor="black", linewidth=1.0, zorder=10)
+        # Chance line
+        ax.axhline(0.5, color="grey", linestyle=":", alpha=0.6,
+                   linewidth=0.8, label="chance")
+        # Title with the peak/final cross-seed numbers
+        if len(per_seed_curves) >= 2:
+            mat = np.vstack(list(per_seed_curves.values()))
+            cross_peak = float(np.max(mat.mean(axis=0)))
+            cross_final = float(np.mean(mat[:, -max(1, len(all_t) // 4):]))
+            ax.set_title(f"{probe}\npeak {cross_peak:.2f} → final {cross_final:.2f}  "
+                         f"(drop {cross_peak - cross_final:.2f})",
+                         fontsize=11)
+        else:
+            ax.set_title(probe, fontsize=11)
+        ax.set_xlabel("training step", fontsize=10)
+        if col == 0:
+            ax.set_ylabel("argmax accuracy", fontsize=10)
+        ax.set_ylim(-0.02, 1.02)
         ax.grid(alpha=0.3)
         if col == 0:
-            ax.legend(loc="upper right", fontsize=8)
+            ax.legend(loc="lower left", fontsize=8, framealpha=0.9, ncol=2)
 
-    fig.suptitle("Transient emergence: capabilities that peak then collapse\n"
-                 "(smoothed argmax_acc per seed; dashed = peak step)", fontsize=11)
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.suptitle("Transient capabilities: rise to peak then collapse  "
+                 "(rolling-mean smoothed; bold = cross-seed mean ± std; circles = per-seed peak)",
+                 fontsize=11)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -708,7 +781,8 @@ def main():
     runs = load_probe_logs()
     fits_df = make_fig1(runs, "figures/fig1_emergence.png")
     print("Wrote figures/fig1_emergence.png")
-    make_fig2(runs, "figures/fig2_metric_dependence.png")
+    # Force numeric_sequence for metric-dependence figure (matches paper text)
+    make_fig2(runs, "figures/fig2_metric_dependence.png", probe="numeric_sequence")
     print("Wrote figures/fig2_metric_dependence.png")
     make_fig3(fits_df, "figures/fig3_t50_scatter.png")
     print("Wrote figures/fig3_t50_scatter.png")

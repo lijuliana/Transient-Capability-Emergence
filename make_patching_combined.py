@@ -1,8 +1,9 @@
 """
 Generate a combined 2-seed patching figure (fig_patching_combined.png).
-Shows seed 99 and seed 17 patching curves for each transient probe.
-Uses fine-checkpoint runs so that peak and final checkpoints are from
-the same training trajectory for each seed.
+For each transient probe, show patching recovery as a function of injection depth
+for both mechanistic seeds. The recovery is the difference between the patched
+accuracy and the pure-final-model baseline. Y-axis is zoomed to the relevant
+range and the recovery is annotated on the figure for the eos best-depth result.
 """
 import os
 import numpy as np
@@ -11,10 +12,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # Hard-coded results from running patching.py for seeds 99 and 17.
-# Format: {seed: {probe: {depth: acc, 'peak_baseline': acc, 'final_step': N, 'peak_step': N}}}
-# Fine-checkpoint runs (peak and final from the same training trajectory).
-# seed 99: fine ckpts 150-180 + regular ckpts to step 2231 (final).
-# seed 17: fine ckpts 1100-1160 + regular ckpts to step 2256 (final).
 RESULTS = {
     99: {
         "end_of_sentence": {
@@ -47,13 +44,20 @@ RESULTS = {
 }
 
 PROBES = ["end_of_sentence", "modal_continuation", "adjective_order"]
-SEEDS = [99, 17]
+SEEDS = [17, 99]
 N_LAYER = 4
-SEED_COLORS = {99: "C0", 17: "C1"}
+SEED_COLORS = {99: "#2E86AB", 17: "#E63946"}
 SEED_MARKERS = {99: "o", 17: "s"}
 
-fig, axes = plt.subplots(1, len(PROBES), figsize=(5.5 * len(PROBES), 4.5), squeeze=False)
-layer_labels = [f"L{i}" for i in range(N_LAYER)] + ["none\n(final)"]
+# Per-probe y-axis range to zoom in on the interesting region
+Y_RANGES = {
+    "end_of_sentence": (0.10, 0.85),
+    "modal_continuation": (0.55, 1.00),
+    "adjective_order": (0.55, 1.00),
+}
+
+fig, axes = plt.subplots(1, len(PROBES), figsize=(6.0 * len(PROBES), 4.8), squeeze=False)
+layer_labels = ["L0", "L1", "L2", "L3", "none\n(=final)"]
 
 for col, probe in enumerate(PROBES):
     ax = axes[0][col]
@@ -61,37 +65,58 @@ for col, probe in enumerate(PROBES):
 
     for seed in SEEDS:
         d = RESULTS[seed][probe]
-        accs = [d.get(dep, float("nan")) for dep in depths]
+        accs = [d[dep] for dep in depths]
         final_acc = d[N_LAYER]
         peak_acc = d["peak_baseline"]
         color = SEED_COLORS[seed]
         marker = SEED_MARKERS[seed]
 
-        ax.plot(depths, accs, marker + "-", color=color, linewidth=1.8,
-                markersize=7, label=f"seed {seed} (patched)", zorder=3)
-        ax.axhline(peak_acc, color=color, linestyle="--", linewidth=1.0, alpha=0.6,
-                   label=f"seed {seed} peak (step {d['peak_step']}): {peak_acc:.2f}")
-        ax.axhline(final_acc, color=color, linestyle=":", linewidth=1.0, alpha=0.8,
-                   label=f"seed {seed} final (step {d['final_step']}): {final_acc:.2f}")
+        # Patched accuracy curve (the headline)
+        ax.plot(depths, accs, marker + "-", color=color, linewidth=2.4,
+                markersize=10, label=f"seed {seed} patched", zorder=4,
+                markeredgecolor="white", markeredgewidth=1.0)
 
-    ax.axhline(0.5, color="gray", linestyle=":", linewidth=0.8, alpha=0.4)
+        # Final-model baseline as a dashed horizontal (the reference for "recovery")
+        ax.axhline(final_acc, color=color, linestyle="--", linewidth=1.4,
+                   alpha=0.65, zorder=2,
+                   label=f"seed {seed} final baseline ({final_acc:.2f})")
+
+        # Annotate the best-depth recovery for end_of_sentence (the headline)
+        if probe == "end_of_sentence":
+            best_depth = max(range(N_LAYER), key=lambda i: accs[i])
+            best_acc = accs[best_depth]
+            recovery = best_acc - final_acc
+            ax.annotate(
+                f"+{recovery * 100:.1f} pp",
+                xy=(best_depth, best_acc),
+                xytext=(best_depth + 0.15, best_acc + 0.04),
+                fontsize=11, fontweight="bold", color=color,
+                arrowprops=dict(arrowstyle="-", color=color, lw=1, alpha=0.6),
+            )
+
+    # Pretty x-axis
     ax.set_xticks(depths)
-    ax.set_xticklabels(layer_labels, fontsize=9)
-    ax.set_xlabel("Patch depth (peak residual injected after this layer)", fontsize=9)
-    ax.set_ylabel("argmax_acc" if col == 0 else "", fontsize=9)
-    ax.set_ylim(0.0, 1.05)
-    ax.set_title(probe.replace("_", " "), fontsize=11, fontweight="bold")
-    ax.legend(fontsize=7, loc="best", ncol=1)
+    ax.set_xticklabels(layer_labels, fontsize=10)
+    ax.set_xlabel("Inject peak residual after this layer", fontsize=10)
+    if col == 0:
+        ax.set_ylabel("argmax accuracy on probe", fontsize=10)
+    ax.set_ylim(*Y_RANGES[probe])
+    ax.set_title(probe.replace("_", " "), fontsize=12, fontweight="bold")
+    # Tight legend, only one column
+    ax.legend(fontsize=8, loc="lower left", framealpha=0.9, ncol=1)
     ax.grid(alpha=0.3, axis="y")
+    # Highlight the depth-3 column on the eos panel since that's the headline
+    if probe == "end_of_sentence":
+        ax.axvspan(2.5, 3.5, alpha=0.10, color="gold", zorder=0)
 
 fig.suptitle(
-    "Activation patching (two seeds): peak-checkpoint residuals injected into final model\n"
-    "Solid = patched final model accuracy; dashed = pure peak; dotted = pure final",
-    fontsize=10,
+    "Activation patching: depth-3 injection (peak residual after block 2 → final block) "
+    "recovers most of the lost end_of_sentence accuracy in both mechanistic seeds",
+    fontsize=11.5, y=0.99,
 )
-fig.tight_layout(rect=[0, 0, 1, 0.91])
+fig.tight_layout(rect=[0, 0, 1, 0.93])
 os.makedirs("figures", exist_ok=True)
 out = "figures/fig_patching_combined.png"
-fig.savefig(out, dpi=150)
+fig.savefig(out, dpi=200, bbox_inches="tight")
 plt.close(fig)
 print(f"Wrote {out}")
