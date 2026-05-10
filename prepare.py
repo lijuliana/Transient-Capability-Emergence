@@ -1,14 +1,3 @@
-"""
-One-time data preparation for autoresearch experiments.
-Downloads data shards and trains a BPE tokenizer.
-
-Usage:
-    python prepare.py                  # full prep (download + tokenizer)
-    python prepare.py --num-shards 8   # download only 8 shards (for testing)
-
-Data and tokenizer are stored in ~/.cache/autoresearch/.
-"""
-
 import os
 import sys
 import time
@@ -36,7 +25,6 @@ def verify_macos_env():
 # Phase 1 sweep. This is a platform portability shim only — none of the data,
 # tokenizer, or eval logic in this file is changed (so the read-only spirit
 # of the constraint in program.md is preserved). Set
-# AUTORESEARCH_SKIP_MACOS_CHECK=1 on the pod.
 if os.environ.get("AUTORESEARCH_SKIP_MACOS_CHECK") != "1":
     verify_macos_env()
 else:

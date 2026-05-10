@@ -26,10 +26,9 @@ A single training run takes roughly five minutes on an RTX 4090.
 ## Training
 
 ```bash
-AUTORESEARCH_SEED=42 uv run train.py > run_seed42.log 2>&1
+uv run train.py > run_seed42.log 2>&1
 ```
 
-The `AUTORESEARCH_SEED` environment variable selects the seed.
 Probe accuracy is logged to `probe_log_seed{SEED}.tsv` every five
 optimizer steps. The five behavioural seeds reported in the analysis
 below are 42, 123, 7, 5, and 17.
@@ -130,9 +129,7 @@ same critical head, at the same final checkpoint, helps the stable
 
 The training pipeline runs on Apple Silicon (MPS) and on NVIDIA GPUs.
 On an RTX 4090, a single 5-minute training run reaches roughly
-3,946–4,869 optimizer steps. Set `AUTORESEARCH_SKIP_MACOS_CHECK=1`
-on Linux GPU pods to skip the macOS gate at the top of `train.py`
-and `prepare.py`.
+3,946–4,869 optimizer steps.
 
 ## License
 
